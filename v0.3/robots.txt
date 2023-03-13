@@ -1,4 +1,0 @@
-User-agent: *
-Allow: /
-
-Sitemap: https://kubernetes-sigs.github.com/node-feature-discovery-operator/v0.3/sitemap.xml
