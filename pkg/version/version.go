@@ -1,5 +1,5 @@
 /*
-Copyright 2021. The Kubernetes Authors.
+Copyright 2022 The Kubernetes Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -14,9 +14,19 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package components
+package version
 
-const (
-	// AssetsDir defines the directory with assets under the operator image
-	AssetsDir = "/assets"
-)
+const undefinedVersion string = "undefined"
+
+// Must not be const, supposed to be set using ldflags at build time
+var version = undefinedVersion
+
+// Get returns the version as a string
+func Get() string {
+	return version
+}
+
+// Undefined returns if version is at it's default value
+func Undefined() bool {
+	return version == undefinedVersion
+}

@@ -18,28 +18,44 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	"os"
 
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
+	"k8s.io/klog/v2"
 
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
-	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
-	nfdkubernetesiov1 "github.com/kubernetes-sigs/node-feature-discovery-operator/api/v1"
-	"github.com/kubernetes-sigs/node-feature-discovery-operator/controllers"
+	nfdkubernetesiov1 "sigs.k8s.io/node-feature-discovery-operator/api/v1"
+	"sigs.k8s.io/node-feature-discovery-operator/controllers"
+	"sigs.k8s.io/node-feature-discovery-operator/pkg/utils"
+	"sigs.k8s.io/node-feature-discovery-operator/pkg/version"
 	// +kubebuilder:scaffold:imports
 )
 
 var (
-	scheme   = runtime.NewScheme()
-	setupLog = ctrl.Log.WithName("setup")
+	// scheme holds a new scheme for the operator
+	scheme = runtime.NewScheme()
 )
 
+const (
+	// ProgramName is the canonical name of this program
+	ProgramName = "nfd-operator"
+)
+
+// operatorArgs holds command line arguments
+type operatorArgs struct {
+	metricsAddr          string
+	enableLeaderElection bool
+	probeAddr            string
+}
+
 func init() {
+	//Set up the Go client and NFD schemes. Panic on errors.
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
 
 	utilruntime.Must(nfdkubernetesiov1.AddToScheme(scheme))
@@ -47,57 +63,91 @@ func init() {
 }
 
 func main() {
-	var metricsAddr string
-	var enableLeaderElection bool
-	var probeAddr string
-	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8080", "The address the metric endpoint binds to.")
-	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
-	flag.BoolVar(&enableLeaderElection, "leader-elect", false,
-		"Enable leader election for controller manager. "+
-			"Enabling this will ensure there is only one active controller manager.")
-	opts := zap.Options{
-		Development: true,
+	flags := flag.NewFlagSet(ProgramName, flag.ExitOnError)
+
+	printVersion := flags.Bool("version", false, "Print version and exit.")
+
+	args := initFlags(flags)
+	// Inject klog flags
+	klog.InitFlags(flags)
+
+	_ = flags.Parse(os.Args[1:])
+	if len(flags.Args()) > 0 {
+		fmt.Fprintf(flags.Output(), "unknown command line argument: %s\n", flags.Args()[0])
+		flags.Usage()
+		os.Exit(2)
 	}
-	opts.BindFlags(flag.CommandLine)
-	flag.Parse()
 
-	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
+	if *printVersion {
+		fmt.Println(ProgramName, version.Get())
+		os.Exit(0)
+	}
 
+	watchNamespace, envSet := utils.GetWatchNamespace()
+	if !envSet {
+		klog.Info("unable to get WatchNamespace, " +
+			"the manager will watch and manage resources in all namespaces")
+	}
+
+	// Create a new manager to manage the operator
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
 		Scheme:                 scheme,
-		MetricsBindAddress:     metricsAddr,
+		MetricsBindAddress:     args.metricsAddr,
 		Port:                   9443,
-		HealthProbeBindAddress: probeAddr,
-		LeaderElection:         enableLeaderElection,
+		HealthProbeBindAddress: args.probeAddr,
+		LeaderElection:         args.enableLeaderElection,
 		LeaderElectionID:       "39f5e5c3.nodefeaturediscoveries.nfd.kubernetes.io",
+		Namespace:              watchNamespace,
 	})
+
 	if err != nil {
-		setupLog.Error(err, "unable to start manager")
+		klog.Error(err, "unable to start manager")
 		os.Exit(1)
 	}
 
 	if err = (&controllers.NodeFeatureDiscoveryReconciler{
 		Client: mgr.GetClient(),
-		Log:    ctrl.Log.WithName("controllers").WithName("NodeFeatureDiscovery"),
 		Scheme: mgr.GetScheme(),
 	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "NodeFeatureDiscovery")
+		klog.Error(err, "unable to create controller", "controller", "NodeFeatureDiscovery")
 		os.Exit(1)
 	}
 	// +kubebuilder:scaffold:builder
 
+	// Next, add a Healthz checker to the manager. Healthz is a health and liveness package
+	// that the operator will use to periodically check the health of its pods, etc.
 	if err := mgr.AddHealthzCheck("health", healthz.Ping); err != nil {
-		setupLog.Error(err, "unable to set up health check")
-		os.Exit(1)
-	}
-	if err := mgr.AddReadyzCheck("check", healthz.Ping); err != nil {
-		setupLog.Error(err, "unable to set up ready check")
+		klog.Error(err, "unable to set up health check")
 		os.Exit(1)
 	}
 
-	setupLog.Info("starting manager")
-	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {
-		setupLog.Error(err, "problem running manager")
+	// Now add a ReadyZ checker to the manager as well. It is important to ensure that the
+	// API server's readiness is checked when the operator is installed and running.
+	if err := mgr.AddReadyzCheck("check", healthz.Ping); err != nil {
+		klog.Error(err, "unable to set up ready check")
 		os.Exit(1)
 	}
+
+	// Register signal handler for SIGINT and SIGTERM to terminate the manager
+	klog.Info("starting manager")
+	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {
+		klog.Error(err, "problem running manager")
+		os.Exit(1)
+	}
+}
+
+func initFlags(flagset *flag.FlagSet) *operatorArgs {
+	args := operatorArgs{}
+
+	// Setup CLI arguments
+	flagset.StringVar(&args.metricsAddr, "metrics-bind-address", ":8080", "The address the Prometheus "+
+		"metric endpoint binds to for scraping NFD resource usage data.")
+	flagset.StringVar(&args.probeAddr, "health-probe-bind-address", ":8081", "The address the probe "+
+		"endpoint binds to for determining liveness, readiness, and configuration of"+
+		"operator pods.")
+	flagset.BoolVar(&args.enableLeaderElection, "leader-elect", false,
+		"Enable leader election for controller manager. "+
+			"Enabling this will ensure there is only one active controller manager.")
+
+	return &args
 }

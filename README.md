@@ -1,74 +1,68 @@
 # Node Feature Discovery Operator
 
-The Node Feature Discovery operator manages detection of hardware features and configuration in a kubernetes cluster.
-The operator orchestrates all resources needed to run the [Node-Feature-Discovery](https://github.com/kubernetes-sigs/node-feature-discovery) DaemonSet
+The Node Feature Discovery operator is a tool for Kubernetes administrators 
+that makes it easy to detect and understand the hardware features and 
+configurations of a cluster's nodes. With this operator, administrators can 
+easily gather information about their nodes that can be used for scheduling, 
+resource management, and more by controlling the life cycle of 
+[NFD](https://github.com/kubernetes-sigs/node-feature-discovery).
 
-## Community, discussion, contribution, and support
+## How it Works
 
-Learn how to engage with the Kubernetes community on the [community page](http://kubernetes.io/community/).
+The operator works by orchestrating all resources needed to run the 
+Node-Feature-Discovery (NFD). NFD runs on each node in the cluster and detects 
+the features and configurations of the node's hardware.
 
-You can reach the maintainers of this project at:
-
-- [Slack channel](https://kubernetes.slack.com/messages/node-feature-discovery)
-- [Mailing list](https://groups.google.com/forum/#!forum/kubernetes-sig-node)
+## Quick start
 
 
-## Building the operator
-
-Checkout the sources
+Get the source code
 
 ```bash
-$ git clone https://github.com/kubernetes-sigs/node-feature-discovery-operator
+git clone -b v0.5.0 https://github.com/kubernetes-sigs/node-feature-discovery-operator
 ```
 
-Build the operator image
+Deploy the operator
+
+> By default it will deploy using the minimal tag image, is
+> desired you can simply modify the IMAGE_TAG env var to point to the image
+> tag to use.
 
 ```bash
-IMAGE_REGISTRY=<my registry>
-make image
-```
-
-Optionally you can push it to your image repo
-
-```bash
-IMAGE_REGISTRY=<my registry>
-make push
-```
-
-Alternatively, instead of specifying variables on the command line, you can edit the Makefile to permanently change parameter defaults like name of the image or namespace where the operator is deployed.
-
-## Manual deploy of the operator
-
-The default `NodeFeatureDiscovery` CR will create the operand (NFD) in the `node-feature-discovery-operator` namespace,
-also an empty [nfd-worker-conf](https://kubernetes-sigs.github.io/node-feature-discovery/v0.6/get-started/deployment-and-usage.html#configuration),
-the CR can be edited to choose another namespace, image, imagePullPolicy and nfd-worker-conf. See the `manifests/0700_cr.yaml` for the default values.
-
-```bash
-IMAGE_REGISTRY=<my registry>
+IMAGE_TAG={{ site.container_image }}
 make deploy
 ```
 
-The operator will use the operand node-feature-discovery image built from: https://github.com/kubernetes-sigs/node-feature-discovery
+By default the operator will watch `NodeFeatureDiscovery` objects
+only in the namespace where the operator is deployed in. This is
+specified by the `WATCH_NAMESPACE` env variable in the operator
+deployment manifest. If unset the operator will watch ALL
+namespaces.
 
-To uninstall the operator run
+Create a NodeFeatureDiscovery instance
 
 ```bash
-make undeploy
+kubectl apply -f config/samples/nfd.kubernetes.io_v1_nodefeaturediscovery.yaml
 ```
 
-## Extending Node-feature-discovery with sidecar containers and hooks
+## Documentation
 
-First see upstream documentation of the hook feature and how to create a correct hook file:
+For more detailed information on how to use the Node Feature Discovery operator,
+please check out our 
+[documentation](https://kubernetes-sigs.github.io/node-feature-discovery-operator/master)
 
-https://github.com/kubernetes-sigs/node-feature-discovery#local-user-specific-features.
+## Contributing
 
-The DaemonSet running on the workers will mount the `hostPath: /etc/kubernetes/node-feature-discovery/source.d`.
-Additional hooks can than be provided by a sidecar container that is as well running on the workers and mounting the same hostpath and writing the hook executable (shell-script, compiled code, ...) to this directory.
+The Node Feature Discovery operator welcomes contributions, and interested 
+parties are encouraged to take a look at the 
+[contributing guidelines](CONTRIBUTING.md) and 
+[open issues](https://github.com/kubernetes-sigs/node-feature-discovery-operator/issues). 
+We're excited to have you join our community of contributors.
 
-NFD will execute any file in this directory, if one needs any configuration for the hook,
-a separate configuration directory can be created under `/etc/kubernetes/node-feature-discovery/source.d`
-e.g. `/etc/kubernetes/node-feature-discovery/source.d/own-hook-conf`, NFD will not recurse deeper into the file hierarchy.
+## Support
 
-### Code of conduct
-
-Participation in the Kubernetes community is governed by the [Kubernetes Code of Conduct](code-of-conduct.md).
+If there are any issues or questions about the Node Feature Discovery operator,
+they can be addressed by opening an issue on the 
+[GitHub repository](https://github.com/kubernetes-sigs/node-feature-discovery-operator/issues/new/choose) 
+or reaching out on the 
+[Slack channel](https://kubernetes.slack.com/messages/node-feature-discovery).

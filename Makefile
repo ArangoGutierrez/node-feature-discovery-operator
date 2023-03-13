@@ -4,9 +4,8 @@
 
 GO_CMD ?= go
 GO_FMT ?= gofmt
+GO_VERSION := $(shell awk '/^go /{print $$2}' go.mod|head -n1)
 CONTAINER_RUN_CMD ?= docker run -u "`id -u`:`id -g`"
-
-MDL ?= mdl
 
 # Docker base command for working with html documentation.
 # Use host networking because 'jekyll serve' is stupid enough to use the
@@ -29,6 +28,7 @@ JEKYLL_OPTS := -d '$(SITE_DESTDIR)' $(if $(SITE_BASEURL),-b '$(SITE_BASEURL)',)
 # - use the VERSION as arg of the bundle target (e.g make bundle VERSION=0.2.1)
 # - use environment variables to overwrite this value (e.g export VERSION=0.2.1)
 VERSION := $(shell git describe --tags --dirty --always)
+BUNDLE_VERSION := $(shell git tag | sort -V | tail -1 | awk '{print substr($$1,2); }')
 
 # CHANNELS define the bundle channels used in the bundle.
 # Add a new line here if you would like to change its default config. (E.g CHANNELS = "preview,fast,stable")
@@ -57,16 +57,21 @@ BUNDLE_IMG ?= controller-bundle:$(VERSION)
 IMAGE_BUILD_CMD ?= docker build
 IMAGE_PUSH_CMD ?= docker push
 IMAGE_BUILD_EXTRA_OPTS ?=
-IMAGE_REGISTRY ?= k8s.gcr.io/nfd
+IMAGE_REGISTRY ?= registry.k8s.io/nfd
 IMAGE_NAME := node-feature-discovery-operator
 IMAGE_TAG_NAME ?= $(VERSION)
 IMAGE_EXTRA_TAG_NAMES ?=
-IMAGE_REPO := $(IMAGE_REGISTRY)/$(IMAGE_NAME)
-IMAGE_TAG := $(IMAGE_REPO):$(IMAGE_TAG_NAME)
+IMAGE_REPO ?= $(IMAGE_REGISTRY)/$(IMAGE_NAME)
+IMAGE_TAG ?= $(IMAGE_REPO):$(IMAGE_TAG_NAME)
 IMAGE_EXTRA_TAGS := $(foreach tag,$(IMAGE_EXTRA_TAG_NAMES),$(IMAGE_REPO):$(tag))
+BUILDER_IMAGE ?= golang:$(GO_VERSION)-buster
+BASE_IMAGE_FULL ?= debian:buster-slim
+BASE_IMAGE_MINIMAL ?= gcr.io/distroless/base
+
+IMAGE_TAG_RBAC_PROXY ?= gcr.io/kubebuilder/kube-rbac-proxy:v0.8.0
 
 # Produce CRDs that work back to Kubernetes 1.11 (no version conversion)
-CRD_OPTIONS ?= "crd:trivialVersions=true,preserveUnknownFields=false"
+CRD_OPTIONS ?= "crd"
 
 # Get the currently used golang install path (in GOPATH/bin, unless GOBIN is set)
 ifeq (,$(shell $(GO_CMD) env GOBIN))
@@ -77,14 +82,17 @@ endif
 
 GOOS=linux
 
-PACKAGE=github.com/kubernetes-sigs/node-feature-discovery-operator
+PACKAGE=sigs.k8s.io/node-feature-discovery-operator
 MAIN_PACKAGE=main.go
 BIN=node-feature-discovery-operator
+LDFLAGS = -ldflags "-s -w -X sigs.k8s.io/node-feature-discovery-operator/pkg/version.version=$(VERSION)"
+
+PROJECT_DIR := $(shell dirname $(abspath $(lastword $(MAKEFILE_LIST))))
 
 all: build
 
 # Run tests
-ENVTEST_ASSETS_DIR=$(shell pwd)/testbin
+ENVTEST_ASSETS_DIR=$(PROJECT_DIR)/testbin
 test: generate fmt vet manifests
 	mkdir -p ${ENVTEST_ASSETS_DIR}
 	test -f ${ENVTEST_ASSETS_DIR}/setup-envtest.sh || curl -sSLo ${ENVTEST_ASSETS_DIR}/setup-envtest.sh https://raw.githubusercontent.com/kubernetes-sigs/controller-runtime/v0.7.0/hack/setup-envtest.sh
@@ -94,7 +102,7 @@ go_mod:
 
 # Build binary
 build: go_mod
-	@GOOS=$(GOOS) GO111MODULE=on CGO_ENABLED=0 $(GO_CMD) build -o $(BIN) $(MAIN_PACKAGE)
+	@GOOS=$(GOOS) GO111MODULE=on CGO_ENABLED=0 $(GO_CMD) build -o $(BIN) $(LDFLAGS) $(MAIN_PACKAGE)
 
 # Run against the configured Kubernetes cluster in ~/.kube/config
 run: generate fmt vet manifests
@@ -108,10 +116,16 @@ install: manifests kustomize
 uninstall: manifests kustomize
 	$(KUSTOMIZE) build config/crd | kubectl delete -f -
 
+clean-manifests = (cd config/manager && $(KUSTOMIZE) edit set image controller=registry.k8s.io/nfd/node-feature-discovery-operator:0.4.2)
+
 # Deploy controller in the configured Kubernetes cluster in ~/.kube/config
 deploy: kustomize
-	cd config/manager && $(KUSTOMIZE) edit set image controller=${IMAGE_TAG}
+	cd $(PROJECT_DIR)/config/manager && \
+		$(KUSTOMIZE) edit set image controller=${IMAGE_TAG}-minimal
+	cd $(PROJECT_DIR)/config/default && \
+		$(KUSTOMIZE) edit set image kube-rbac-proxy=${IMAGE_TAG_RBAC_PROXY}
 	$(KUSTOMIZE) build config/default | kubectl apply -f -
+	@$(call clean-manifests)
 
 # UnDeploy controller from the configured Kubernetes cluster in ~/.kube/config
 undeploy:
@@ -138,7 +152,12 @@ ci-lint:
 	golangci-lint run --timeout 5m0s
 
 mdlint:
-	find docs/ -path docs/vendor -prune -false -o -name '*.md' | xargs $(MDL) -s docs/mdl-style.rb
+	${CONTAINER_RUN_CMD} \
+	--rm \
+	--volume "${PWD}:/workdir:ro,z" \
+	--workdir /workdir \
+	ruby:slim \
+	/workdir/scripts/test-infra/mdlint.sh
 
 clean:
 	$(GO_CMD)  clean
@@ -153,15 +172,32 @@ clean-labels:
 generate: controller-gen
 	$(CONTROLLER_GEN) object:headerFile="utils/boilerplate.go.txt" paths="./..."
 
-# Build the docker image
+# Build the container image
 image:
 	$(IMAGE_BUILD_CMD) -t $(IMAGE_TAG) \
+		--target full \
+		--build-arg BUILDER_IMAGE=$(BUILDER_IMAGE) \
+		--build-arg BASE_IMAGE_FULL=$(BASE_IMAGE_FULL) \
+		--build-arg BASE_IMAGE_MINIMAL=$(BASE_IMAGE_MINIMAL) \
 		$(foreach tag,$(IMAGE_EXTRA_TAGS),-t $(tag)) \
 		$(IMAGE_BUILD_EXTRA_OPTS) ./
 
-# Push the docker image
-push:
+image-minimal:
+	$(IMAGE_BUILD_CMD) -t $(IMAGE_TAG)-minimal \
+		--target minimal \
+		--build-arg BUILDER_IMAGE=$(BUILDER_IMAGE) \
+		--build-arg BASE_IMAGE_FULL=$(BASE_IMAGE_FULL) \
+		--build-arg BASE_IMAGE_MINIMAL=$(BASE_IMAGE_MINIMAL) \
+		$(foreach tag,$(IMAGE_EXTRA_TAGS),-t $(tag)-minimal) \
+		$(IMAGE_BUILD_EXTRA_OPTS) ./
+
+# Push the container image
+push: 
 	$(IMAGE_PUSH_CMD) $(IMAGE_TAG)
+	for tag in $(IMAGE_EXTRA_TAGS); do $(IMAGE_PUSH_CMD) $$tag; done
+
+push-minimal:
+	$(IMAGE_PUSH_CMD) $(IMAGE_TAG)-minimal
 	for tag in $(IMAGE_EXTRA_TAGS); do $(IMAGE_PUSH_CMD) $$tag; done
 
 site-build:
@@ -173,38 +209,29 @@ site-serve:
 	$(SITE_BUILD_CMD) sh -c '/usr/local/bin/bundle install && "$$BUNDLE_BIN/jekyll" serve $(JEKYLL_OPTS) -H 127.0.0.1'
 
 # Download controller-gen locally if necessary
-CONTROLLER_GEN = $(shell pwd)/bin/controller-gen
+CONTROLLER_GEN = $(PROJECT_DIR)/bin/controller-gen
 controller-gen:
-	$(call go-get-tool,$(CONTROLLER_GEN),sigs.k8s.io/controller-tools/cmd/controller-gen@v0.4.1)
+	@GOBIN=$(PROJECT_DIR)/bin GO111MODULE=on $(GO_CMD) install sigs.k8s.io/controller-tools/cmd/controller-gen@v0.8.0
 
 # Download kustomize locally if necessary
-KUSTOMIZE = $(shell pwd)/bin/kustomize
+KUSTOMIZE = $(PROJECT_DIR)/bin/kustomize
 kustomize:
-	$(call go-get-tool,$(KUSTOMIZE),sigs.k8s.io/kustomize/kustomize/v3@v3.8.7)
-
-# go-get-tool will 'go get' any package $2 and install it to $1.
-PROJECT_DIR := $(shell dirname $(abspath $(lastword $(MAKEFILE_LIST))))
-define go-get-tool
-@[ -f $(1) ] || { \
-set -e ;\
-TMP_DIR=$$(mktemp -d) ;\
-cd $$TMP_DIR ;\
-go mod init tmp ;\
-echo "Downloading $(2)" ;\
-GOBIN=$(PROJECT_DIR)/bin go get $(2) ;\
-rm -rf $$TMP_DIR ;\
-}
-endef
+	@GOBIN=$(PROJECT_DIR)/bin GO111MODULE=on $(GO_CMD) install sigs.k8s.io/kustomize/kustomize/v4@v4.5.2
 
 # Generate bundle manifests and metadata, then validate generated files.
 .PHONY: bundle
 bundle: manifests kustomize
 	operator-sdk generate kustomize manifests -q
-	cd config/manager && $(KUSTOMIZE) edit set image controller=$(IMAGE_TAG)
-	$(KUSTOMIZE) build config/manifests | operator-sdk generate bundle -q --overwrite --version $(VERSION) $(BUNDLE_METADATA_OPTS)
+	cd config/manager && $(KUSTOMIZE) edit set image controller=$(IMAGE_TAG)-minimal
+	$(KUSTOMIZE) build config/manifests | operator-sdk generate bundle -q --overwrite --version $(BUNDLE_VERSION) $(BUNDLE_METADATA_OPTS)
 	operator-sdk bundle validate ./bundle
 
 # Build the bundle image.
 .PHONY: bundle-build
 bundle-build:
 	$(IMAGE_BUILD_CMD)  -f bundle.Dockerfile -t $(BUNDLE_IMG) .
+
+# push the bundle image.
+.PHONY: bundle-push
+bundle-push:
+	$(IMAGE_PUSH_CMD) $(BUNDLE_IMG)

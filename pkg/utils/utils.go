@@ -1,5 +1,5 @@
 /*
-Copyright 2020-2021 The Kubernetes Authors.
+Copyright 2022. The Kubernetes Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -13,24 +13,18 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 */
-
-package config
+package utils
 
 import (
 	"os"
 )
 
-const (
-	nodeFeautreDiscoveryImageDefault string = "k8s.gcr.io/nfd/node-feature-discovery:v0.7.0"
-)
+// WatchNamespaceEnvVar is the constant for env variable WATCH_NAMESPACE
+// which specifies the Namespace to watch.
+// An empty value means the operator is running with cluster scope.
+const WatchNamespaceEnvVar = "WATCH_NAMESPACE"
 
-// NodeFeatureDiscoveryImage returns the operator's operand/nfd image.
-func NodeFeatureDiscoveryImage() string {
-	nodeFeatureDiscoveryImage := os.Getenv("NODE_FEATURE_DISCOVERY_IMAGE")
-
-	if len(nodeFeatureDiscoveryImage) > 0 {
-		return nodeFeatureDiscoveryImage
-	}
-
-	return nodeFeautreDiscoveryImageDefault
+// GetWatchNamespace returns the Namespace the operator should be watching for changes
+func GetWatchNamespace() (string, bool) {
+	return os.LookupEnv(WatchNamespaceEnvVar)
 }

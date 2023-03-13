@@ -17,7 +17,6 @@ limitations under the License.
 package v1
 
 import (
-	conditionsv1 "github.com/openshift/custom-resource-status/conditions/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -25,21 +24,52 @@ import (
 // NodeFeatureDiscoverySpec defines the desired state of NodeFeatureDiscovery
 // +k8s:openapi-gen=true
 type NodeFeatureDiscoverySpec struct {
-	Operand      OperandSpec `json:"operand"`
-	Instance     string      `json:"instance"`
-	WorkerConfig ConfigMap   `json:"workerConfig"`
+	// +optional
+	Operand OperandSpec `json:"operand"`
+
+	// Deploy the NFD-Topology-Updater
+	// NFD-Topology-Updater is a daemon responsible for examining allocated
+	// resources on a worker node to account for resources available to be
+	// allocated to new pod on a per-zone basis
+	// https://kubernetes-sigs.github.io/node-feature-discovery/v0.10/get-started/introduction.html#nfd-topology-updater
+	// +optional
+	TopologyUpdater bool `json:"topologyUpdater"`
+
+	// Instance name. Used to separate annotation namespaces for
+	// multiple parallel deployments.
+	// +optional
+	Instance string `json:"instance"`
+
+	// ExtraLabelNs defines the list of of allowed extra label namespaces
+	// By default, only allow labels in the default `feature.node.kubernetes.io` label namespace
+	// +nullable
+	// +kubebuilder:validation:Optional
+	ExtraLabelNs []string `json:"extraLabelNs,omitempty"`
+
+	// ResourceLabels defines the list of features
+	// to be advertised as extended resources instead of labels.
+	// +nullable
+	// +kubebuilder:validation:Optional
+	ResourceLabels []string `json:"resourceLabels,omitempty"`
+
+	// LabelWhiteList defines a regular expression
+	// for filtering feature labels based on their name.
+	// Each label must match against the given reqular expression in order to be published.
+	// +nullable
+	// +kubebuilder:validation:Optional
+	LabelWhiteList string `json:"labelWhiteList,omitempty"`
+
+	// WorkerConfig describes configuration options for the NFD
+	// worker.
+	// +optional
+	WorkerConfig ConfigMap `json:"workerConfig"`
 }
 
 // OperandSpec describes configuration options for the operand
 type OperandSpec struct {
-	// Namespace defines the namespace to deploy nfd-master
-	// and nfd-worker pods
-	// +kubebuilder:validation:Pattern=[a-zA-Z0-9\.\-\/]+
-	Namespace string `json:"namespace,omitempty"`
-
 	// Image defines the image to pull for the
 	// NFD operand
-	// [defaults to k8s.gcr.io/nfd/node-feature-discovery]
+	// [defaults to registry.k8s.io/nfd/node-feature-discovery]
 	// +kubebuilder:validation:Pattern=[a-zA-Z0-9\-]+
 	Image string `json:"image,omitempty"`
 
@@ -65,7 +95,7 @@ type ConfigMap struct {
 type NodeFeatureDiscoveryStatus struct {
 	// Conditions represents the latest available observations of current state.
 	// +optional
-	Conditions []conditionsv1.Condition `json:"conditions,omitempty"`
+	Conditions []metav1.Condition `json:"conditions,omitempty"`
 }
 
 // +kubebuilder:object:root=true
