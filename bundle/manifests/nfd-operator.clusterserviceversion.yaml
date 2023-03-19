@@ -14,8 +14,8 @@ metadata:
           "spec": {
             "instance": "",
             "operand": {
-              "image": "gcr.io/k8s-staging-nfd/node-feature-discovery:master",
-              "imagePullPolicy": "Always",
+              "image": "registry.k8s.io/nfd/node-feature-discovery:v0.12.1",
+              "imagePullPolicy": "IfNotPresent",
               "servicePort": 12000
             },
             "workerConfig": {
@@ -65,7 +65,7 @@ metadata:
     capabilities: Basic Install
     categories: Integration & Delivery
     containerImage: registry.k8s.io/nfd/node-feature-discovery-operator:master
-    createdAt: "2023-01-17T14:52:07Z"
+    createdAt: "2023-03-19T17:38:56Z"
     description: |-
       The Node Feature Discovery Operator manages the detection of hardware features and configuration in a Kubernetes cluster by labeling the nodes with hardware-specific information. The Node Feature Discovery (NFD) will label the host with node-specific attributes, like PCI cards, kernel, or OS version, and many more.
 
@@ -81,10 +81,10 @@ metadata:
 
       ##NFD-Topology-Updater
       NFD-Topology-Updater is a daemon responsible for examining allocated resources on a worker node to account for resources available to be allocated to new pod on a per-zone basis (where a zone can be a NUMA node). It then communicates the information to nfd-master which does the NodeResourceTopology CR creation corresponding to all the nodes in the cluster. One instance of nfd-topology-updater is supposed to be running on each node of the cluster.
-    operators.operatorframework.io/builder: operator-sdk-v1.26.0+git
+    operators.operatorframework.io/builder: operator-sdk-v1.27.0
     operators.operatorframework.io/project_layout: go.kubebuilder.io/v3
     repository: https://github.com/kubernetes-sigs/node-feature-discovery-operator
-  name: nfd-operator.v0.5.0
+  name: nfd-operator.v0.6.0
   namespace: placeholder
 spec:
   apiservicedefinitions: {}
@@ -403,8 +403,8 @@ spec:
                 - name: OPERATOR_NAME
                   value: cluster-nfd-operator
                 - name: NODE_FEATURE_DISCOVERY_IMAGE
-                  value: gcr.io/k8s-staging-nfd/node-feature-discovery:master
-                image: registry.k8s.io/nfd/node-feature-discovery-operator:0.5.0-minimal
+                  value: registry.k8s.io/nfd/node-feature-discovery:master
+                image: registry.k8s.io/nfd/node-feature-discovery-operator:0.6.0-minimal
                 imagePullPolicy: Always
                 livenessProbe:
                   httpGet:
@@ -514,7 +514,7 @@ spec:
   - discovery
   links:
   - name: Documentation operator
-    url: https://kubernetes-sigs.github.io/node-feature-discovery-operator/v0.4
+    url: https://kubernetes-sigs.github.io/node-feature-discovery-operator/v0.6
   - name: Documentation operand
     url: https://kubernetes-sigs.github.io/node-feature-discovery
   maintainers:
@@ -527,4 +527,4 @@ spec:
   maturity: stable
   provider:
     name: kubernetes-sigs
-  version: 0.5.0
+  version: 0.6.0
